@@ -1,0 +1,4 @@
+In VS Code:
+1.) Click in search bar, select "Show and Run Commands" (Ctrl-Shift-P)
+2.) Select "Python: Select Interpreter"
+3.) Select "Create Virtual Environment"
