@@ -15,10 +15,12 @@ from pathlib import Path
 class CrawledResultsHandler:
     def __init__(self, crawled_results: List[Dict], crawled_urls: set = None):
         self.metadata_schema = {
-            'url': str,
-            'topic': str,
             'crawl_timestamp': str,
             'domain': str,
+            'url': str,
+            'topics': str,
+            'title': str,
+            'preview': str,
             'content_length': int
         }
         self.crawled_results = crawled_results
@@ -30,11 +32,12 @@ class CrawledResultsHandler:
         for result in self.crawled_results:
             # Create metadata dictionary
             metadata = {
-                'url': result['url'],
-                'title': result['title'],
-                'topics': result['topics'],
                 'crawl_timestamp': datetime.now().isoformat(),
                 'domain': result['url'].split('/')[2],
+                'url': result['url'],
+                'topics': result['topics'],
+                'title': result['title'],
+                'preview': result['preview'],
                 'content_length': len(result['content']),
             }
 
@@ -122,9 +125,9 @@ class TopicWebCrawler:
             'RETRY_ENABLED': True,
             'RETRY_TIMES': 3,
             'DOWNLOAD_TIMEOUT': 30,
-            'DEPTH_LIMIT': 5,  # Limit crawl depth
-            'CLOSESPIDER_PAGECOUNT': 100,  # Limit crawl to 100 pages
-            'CLOSESPIDER_ITEMCOUNT': 100,  # Limit crawl to 100 items
+            'DEPTH_LIMIT': 10,  # Limit crawl depth
+            'CLOSESPIDER_PAGECOUNT': 1000,  # Limit crawl to 100 pages
+            'CLOSESPIDER_ITEMCOUNT': 1000,  # Limit crawl to 100 items
             'CLOSESPIDER_ERRORCOUNT': 10,  # Limit crawl to 10 errors
         })
 
@@ -186,13 +189,17 @@ class TopicSpider(scrapy.Spider):
                 return False
 
     def extract_title(self, response) -> str:
-        """Extract page title using multiple methods."""
-        # Try different title selectors in order of preference
+        """Extract page title with priority given to oc-page-title class."""
+        title = None
 
-        # Method 1: Try the title tag
-        title = response.css('title::text').get()
+        # Method 1: Try the oc-page-title class first
+        title = response.css('h1.oc-page-title::text').get()
 
-        # Method 2: Try og:title meta tag
+        # Method 2: Fallback to title tag if oc-page-title not found
+        if not title:
+            title = response.css('title::text').get()
+
+        # Method 3: Try og:title meta tag
         if not title:
             title = response.css(
                 'meta[property="og:title"]::attr(content)').get()
@@ -203,6 +210,39 @@ class TopicSpider(scrapy.Spider):
             title = ' '.join(title.strip().split())
 
         return title or "No title found"
+
+    # def extract_main_content(self, response) -> LiteralString | Literal['']:
+    #     """Extract content specifically from main-content div."""
+    #     try:
+    #         # First, select the main-content div
+    #         main_content = response.css('#main-content')
+
+    #         if not main_content:
+    #             self.logger.warning(
+    #                 f"No #main-content div found on {response.url}")
+    #             return ""
+
+    #         # Extract text from main content areas
+    #         content_selectors = main_content.xpath(
+    #             './/p|.//h1|.//h2|.//h3|.//ul)]'
+    #         )
+
+    #         # Extract and clean content
+    #         content_parts = []
+    #         for text in content_selectors.css('::text').getall():
+    #             text = text.strip()
+    #             if text and not text.isspace():
+    #                 content_parts.append(text)
+
+    #         # Debug logging
+    #         content = ' '.join(content_parts)
+    #         self.logger.debug(f"main-content length: {len(content)}")
+
+    #         return content
+
+    #     except Exception as e:
+    #         self.logger.error(f"Error in extract_clean_content: {str(e)}")
+    #         return ""
 
     def extract_clean_content(self, response):
         """Extract content while excluding the PublicEmergencyAnnouncementList div."""
@@ -240,14 +280,14 @@ class TopicSpider(scrapy.Spider):
                 content_lower = content.lower()
 
                 # Check if any of our topics are mentioned
-                mentioned_topics = [
-                    topic for topic in self.topics if topic.lower() in content_lower]
+                mentioned_topics = [topic for topic in self.topics if topic.lower() in content_lower]
                 if mentioned_topics:
                     self.results.append({
-                        'title': title,
                         'url': url,
+                        'topics': mentioned_topics,
+                        'title': title,
+                        'preview': content.replace(title, '', 1)[:200] + "...",
                         'content': content,
-                        'topics': mentioned_topics
                     })
 
                 # Follow valid links within the same domain
@@ -260,7 +300,8 @@ class TopicSpider(scrapy.Spider):
                             # print(f"valid url: {absolute_url}")
                             yield response.follow(absolute_url, self.parse)
                     except Exception as e:
-                        self.logger.error(f"Error processing URL {href}: {str(e)}")
+                        self.logger.error(
+                            f"Error processing URL {href}: {str(e)}")
 
             except Exception as e:
                 self.logger.error(f"Error parsing {response.url}: {str(e)}")
@@ -296,9 +337,9 @@ def main():
     for i, doc in enumerate(documents, 1):
         print(f"\nResult {i}:")
         print(f"URL: {doc.metadata['url']}")
-        print(f"Title: {doc.metadata['title']}")
         print(f"Topics: {doc.metadata['topics']}")
-        print("Content preview:", doc.page_content[:100] + "...")
+        print(f"Title: {doc.metadata['title']}")
+        print(f"Preview: {doc.metadata['preview']}")
         print("-" * 50)
 
 
